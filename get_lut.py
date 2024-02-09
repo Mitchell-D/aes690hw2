@@ -61,7 +61,6 @@ fields,coords = zip(*(
         ("sza", list(range(0, 90, 20))),
         ))
 print(fields)
-print(coords)
 
 ## Directory where sbdart can spawn temporary subdirectories
 tmp_dir = Path("test/sbdart")

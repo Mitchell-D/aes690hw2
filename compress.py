@@ -89,7 +89,8 @@ def plot_sizes(results:dict, byte_scale=1e9, plot_spec={}):
     fig,ax = plt.subplots()
     labels,sizes = zip(*results.items())
     sizes = np.array(sizes)/byte_scale
-    ax.bar(labels,sizes)
+    ax.grid(zorder=0,axis="y")
+    ax.bar(labels,sizes, zorder=3)
     ax.set_title(plot_spec.get("title"))
     ax.set_xlabel(plot_spec.get("xlabel"))
     ax.set_ylabel(plot_spec.get("ylabel"))
@@ -101,7 +102,7 @@ if __name__=="__main__":
     out_dir = Path("data")
     dataset_name = "sflux"
     ## JSON where compressed file size results are stored
-    results_path = out_dir.joinpath(f"{dataset_name}_sizes.json")
+    sizes_path = out_dir.joinpath(f"{dataset_name}_sizes.json")
 
     """
     Load axis labels, coordinate arrays, and the lookup table from the pkl
@@ -111,7 +112,7 @@ if __name__=="__main__":
     flabels = coords[-1]
     print(flabels)
     print(labels)
-    print(data.shape)
+    print(data.shape, data.size)
     print(data.dtype)
     print(tuple(zip(labels,[c[0] for c in coords])))
 
@@ -133,7 +134,7 @@ if __name__=="__main__":
     """
     Iterate over configurations and record file sizes and a subset of the data
     """
-    results = []
+    sizes = []
     for name,args in run_args.items():
         ## Write a netCDF file with the given configuration
         out_path = out_dir.joinpath(f"{dataset_name}_{name}.nc")
@@ -151,19 +152,21 @@ if __name__=="__main__":
         ## ['idatm', 'zcloud', 'tcloud', 'nre', 'sza', 'wl', 'z', 'feats']
         tmp_data = new_data[0,0,0,0,0,:,-1,:].astype(np.float64)
         file_size = out_path.stat().st_size
-        results.append((name, file_size))
+        sizes.append((name, file_size))
         ## Remove the netCDF just created
         out_path.unlink()
         ## Save the extracted subset as an npy file
         np.save(out_dir.joinpath(out_path.stem+"_sub.npy"), tmp_data)
     ## Save the file size results for all runs in a JSON
-    json.dump(results, results_path.open("w"))
+    json.dump(sizes, sizes_path.open("w"))
     '''
 
-    #'''
+    '''
     """ Make a bar plot showing the file sizes after each compression run """
+    labels,sizes = zip(*json.load(sizes_path.open("r")),)
+    cratios = np.amax(sizes)/np.array(sizes)
     plot_sizes(
-            results=dict(json.load(results_path.open("r"))),
+            results=dict(zip(labels,sizes)),
             byte_scale=1e9,
             plot_spec = {
                 "title":"netCDF4 sizes given different compression schemes",
@@ -171,9 +174,9 @@ if __name__=="__main__":
                 "ylabel":"File size (GB)",
                 }
             )
-    #'''
+    '''
 
-    #'''
+    """ Load the array subsets extracted from the compressed files """
     subset = list(sorted([
             (p.stem.split("_")[1],np.load(p))
             for p in out_dir.iterdir()
@@ -183,27 +186,38 @@ if __name__=="__main__":
     ## Stack the arrays from all the runs into (run,wavelength,feature) shape
     sub_arr = np.stack(sub_arrays)
 
-    feature_idx = -1
+    feature_idx = -1 ## Outgoing flux
     wls = coords[-3]
-    wl_cutoff = 120
+    wl_cutoff = 120 ## 2.4-4um is outside solar curve so ~0
 
+    '''
+    """ Plot spectral curves with each compression method. """
     fig,ax = plt.subplots()
     for i in range(sub_arr.shape[0]-1):
-        ax.plot(wls[:wl_cutoff], sub_arr[i,:wl_cutoff,feature_idx],
+        ax.plot(np.abs(wls[:wl_cutoff]), sub_arr[i,:wl_cutoff,feature_idx],
                 label=sub_labels[i])
     ax.set_xlabel("Wavelength ($\mu m$)")
     ax.set_ylabel("Outgoing Flux ($W\,m^{-2}\,um^{-1}$)")
     ax.set_title("Outgoing spectral flux at surface after data reduction")
     ax.legend()
     plt.show()
+    '''
 
+    #'''
+    """ Calculate and plot error magnitudes """
     fig,ax = plt.subplots()
-    init_values = sub_arr[0,:wl_cutoff,feature_idx]
+    init_values = sub_arr[1,:wl_cutoff,feature_idx]
     diffs = np.stack([sub_arr[i,:wl_cutoff,feature_idx]-init_values
                       for i in range(sub_arr.shape[0])])
-    print(np.any(np.nonzero(diffs)))
+    print(sub_labels)
+    print(f"error: {list(np.average(np.abs(diffs),axis=-1))}")
+    error_count = np.array(diffs==0.0).astype(int)
+    error_rate = 1-np.sum(error_count,axis=1)/diffs.shape[1]
+    print(f"imperfect rate: {error_rate}")
     for i in range(sub_arr.shape[0]-1):
-        ax.plot(wls[:wl_cutoff], diffs[i], label=sub_labels[i])
+        ax.scatter(wls[:wl_cutoff], diffs[i], label=sub_labels[i])
+    ax.set_yscale("log")
+    ax.set_ylim([1e-14,1])
     ax.set_xlabel("Wavelength ($\mu m$)")
     ax.set_ylabel("Flux error ($W\,m^{-2}\,um^{-1}$)")
     ax.set_title("Floating point error in flux after data reduction")

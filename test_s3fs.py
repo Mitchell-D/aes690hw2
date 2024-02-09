@@ -8,6 +8,9 @@ from datetime import datetime,timedelta
 from itertools import chain
 from pathlib import Path
 
+from krttdkit.visualize import geoplot as gp
+from krttdkit.visualize import guitools as gt
+
 def get_gmgsi(dataset, init_time:datetime, num_hours:int):
     """
     Query the GMGSI bucket for a continuous time range of hourly data
@@ -36,14 +39,29 @@ def get_gmgsi(dataset, init_time:datetime, num_hours:int):
 
 if __name__=="__main__":
     """ Load imagery for the full day of 20240115 """
-    ds = get_gmgsi(dataset="lw", init_time=datetime(2024, 1, 15), num_hours=2)
+    ds = get_gmgsi(dataset="lw", init_time=datetime(2024, 1, 15), num_hours=24)
     #np.save("tmp.npy", np.array(ds["data"]))
 
     """ Extract and average values over SEUS """
     lat0,latf = (25,35)
-    lon0,lonf = (-75,-95)
+    lon0,lonf = (-95,-75)
     geo_mask = (ds["lat"][...]>=lat0) & (ds["lat"][...]<latf) & \
-            (ds["lon"]>-lon0)[...] & (ds["lon"][...]>-lonf)
+            (ds["lon"]>=lon0)[...] & (ds["lon"][...]<lonf)
+
+    """ Write RGB images for each timestep """
+    mask_idxs = np.array(np.where(geo_mask))
+    ymin,xmin = tuple(np.amin(mask_idxs,axis=1))
+    ymax,xmax = tuple(np.amax(mask_idxs,axis=1))
+    for i in range(ds["data"].shape[0]):
+        gp.generate_raw_image(
+                (255*gt.scal_to_rgb(np.array(ds["data"].isel(
+                    time=i,
+                    yc=slice(ymin, ymax),
+                    xc=slice(xmin, xmax)
+                    )))).astype(np.uint8),
+                Path(f"report/figs/goes_{i}.png"))
+
+    """ Calculate the average value """
     geo_mask = np.broadcast_to(geo_mask, ds["data"].shape)
     ds = ds["data"].where(geo_mask)
     print(f"Average over SEUS: {np.nanmean(ds)}")
